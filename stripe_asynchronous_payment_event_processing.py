@@ -193,7 +193,66 @@ def _run_tests() -> None:
               "evt_5,4,payment,p,capture,-,7"]) == ["p,m,successful,10,10,4"]
     assert f([]) == []
 
-    print("All tests passed.")
+
+    # ---- Randomized cross-check against a table-driven reference ----
+    import random
+
+    def ref_events(events):
+        VALID = {None: {"create"}, "created": {"authorize"}, "authorized": {"authorize", "capture"},
+                 "partially_captured": {"capture"}, "successful": {"refund"}, "refunded": set()}
+        seen, blocked, pay, order = set(), set(), {}, []
+        for e in events:
+            eid, t, et, pid, pet, mid, amt = e.split(",")
+            if eid in seen:
+                continue
+            seen.add(eid)
+            t = int(t)
+            if et == "merchant_update":
+                if int(amt) >= 80:
+                    blocked.add(mid)
+                continue
+            action = "refund" if et == "refund" else pet
+            state = pay[pid]["state"] if pid in pay else None
+            if action not in VALID[state]:
+                continue
+            if action == "create":
+                pay[pid] = {"m": mid, "state": "created", "a": 0, "c": 0, "t": t}; order.append(pid)
+            elif action == "authorize":
+                if pay[pid]["m"] in blocked:
+                    continue
+                pay[pid]["a"] += int(amt); pay[pid]["state"] = "authorized"; pay[pid]["t"] = t
+            elif action == "capture":
+                pay[pid]["c"] += int(amt); pay[pid]["t"] = t
+                if pay[pid]["c"] > pay[pid]["a"]:
+                    return None  # input violates "captured never exceeds authorized"
+                pay[pid]["state"] = "successful" if pay[pid]["c"] == pay[pid]["a"] else "partially_captured"
+            else:
+                pay[pid]["state"] = "refunded"; pay[pid]["t"] = t
+        return [f"{p},{pay[p]['m']},{pay[p]['state']},{pay[p]['a']},{pay[p]['c']},{pay[p]['t']}" for p in order]
+
+    rng = random.Random(3)
+    for _ in range(400):
+        events, auth = [], {}
+        for i in range(rng.randint(1, 30)):
+            eid = f"e{rng.randint(1, 20)}"  # small id space => duplicates
+            pid = rng.choice(["p1", "p2", "p3"]); mid = rng.choice(["m1", "m2"])
+            r = rng.random()
+            if r < 0.15:
+                events.append(f"{eid},{i},merchant_update,-,-,{mid},{rng.choice([10, 79, 80, 95])}")
+            elif r < 0.3:
+                events.append(f"{eid},{i},refund,{pid},-,-,-")
+            elif r < 0.5:
+                events.append(f"{eid},{i},payment,{pid},create,{mid},-")
+            elif r < 0.75:
+                a = rng.choice([5, 10]); auth[pid] = auth.get(pid, 0) + a
+                events.append(f"{eid},{i},payment,{pid},authorize,-,{a}")
+            else:
+                events.append(f"{eid},{i},payment,{pid},capture,-,{rng.choice([5, 10])}")
+        expected = ref_events(events)
+        if expected is None:
+            continue  # generator broke the input guarantee; not a valid test case
+        assert f(events) == expected, events
+    print("All tests passed (including randomized cross-checks).")
 
 
 if __name__ == "__main__":

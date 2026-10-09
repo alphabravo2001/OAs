@@ -171,7 +171,72 @@ def _run_tests() -> None:
     assert f(["u,a,1000", "u,b,2000"], ["u,a,a2,1100,3", "u,b,b2,2100,3"], [], []) == \
         [["u", str((2 * 1000 + 28 * 1100 + 2 * 2000 + 28 * 2100) // 30)]]
 
-    print("All tests passed.")
+
+    # ---- Randomized cross-check against a day-by-day / unit-by-unit reference ----
+    import random
+    from fractions import Fraction
+
+    def ref_billing(subs, chg, pricing, usage):
+        users = set()
+        versions = {}  # id -> [user, cost, start, end]
+        for r in subs:
+            u, sid, c = r.split(","); versions[sid] = [u, int(c), 1, 30]; users.add(u)
+        parsed = [r.split(",") for r in chg]
+        for u, old, new, c, d in parsed:
+            versions[new] = [u, int(c), int(d), 30]; users.add(u)
+        for u, old, new, c, d in parsed:
+            if old != "-":
+                versions[old][3] = int(d) - 1
+        total = {u: Fraction(0) for u in users}
+        for u, c, s, e in versions.values():
+            for day in range(1, 31):
+                if s <= day <= e:
+                    total[u] += Fraction(c, 30)
+        tiers = {}
+        for r in pricing:
+            p, b, pr = r.split(","); tiers.setdefault(p, []).append((int(b), int(pr)))
+        qty = {}
+        for r in usage:
+            u, p, q = r.split(","); qty[(u, p)] = qty.get((u, p), 0) + int(q); users.add(u); total.setdefault(u, Fraction(0))
+        for (u, p), q in qty.items():
+            finite = sorted(t for t in tiers[p] if t[0] >= 0)
+            unl = [t for t in tiers[p] if t[0] < 0][0][1]
+            for unit in range(1, q + 1):  # unit-by-unit
+                price = unl
+                for b, pr in finite:
+                    if unit <= b:
+                        price = pr; break
+                total[u] += price
+        return [[u, str(int(total[u]))] for u in sorted(users)]  # int() floors non-negative Fractions
+
+    rng = random.Random(11)
+    for _ in range(300):
+        users = ["u1", "u2", "u3"]
+        subs, chg, next_id = [], [], 0
+        active = {}  # sid -> (user, last_change_day)
+        for u in users:
+            for _ in range(rng.randint(0, 2)):
+                sid = f"s{next_id}"; next_id += 1
+                subs.append(f"{u},{sid},{rng.randint(0, 5000)}"); active[sid] = (u, 0)
+        for _ in range(rng.randint(0, 5)):
+            new = f"s{next_id}"; next_id += 1
+            day = rng.randint(1, 30)
+            if active and rng.random() < 0.7:
+                old = rng.choice(list(active))
+                u, last = active.pop(old)
+                if day <= last:
+                    day = min(30, last + 1)
+                chg.append(f"{u},{old},{new},{rng.randint(0, 5000)},{day}")
+            else:
+                u = rng.choice(users); chg.append(f"{u},-,{new},{rng.randint(0, 5000)},{day}")
+            active[new] = (u, day)
+        rng.shuffle(chg)
+        pricing = ["api,-1,%d" % rng.randint(0, 9), "api,3,%d" % rng.randint(0, 9), "api,10,%d" % rng.randint(0, 9),
+                   "gb,-1,%d" % rng.randint(0, 9)]
+        rng.shuffle(pricing)
+        usage = [f"{rng.choice(users + ['u9'])},{rng.choice(['api', 'gb'])},{rng.randint(0, 25)}" for _ in range(rng.randint(0, 5))]
+        assert f(subs, chg, pricing, usage) == ref_billing(subs, chg, pricing, usage), (subs, chg, pricing, usage)
+    print("All tests passed (including randomized cross-checks).")
 
 
 if __name__ == "__main__":

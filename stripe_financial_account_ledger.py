@@ -183,7 +183,72 @@ def _run_tests() -> None:
     # Optional currency token in INIT is tolerated.
     assert f(["INIT a USD 7", "BALANCE 1 a"]) == "7"
 
-    print("All tests passed.")
+
+    # ---- Randomized cross-check against an independent, naive reference ----
+    import random
+
+    def ref_ledger(cmds):
+        def dow(d):
+            return (d - 1) % 7 + 1
+        def next_bday(d):
+            d += 1
+            while dow(d) >= 6:
+                d += 1
+            return d
+        start, funds, out = {}, {}, []
+        daily, weekly = {}, {}
+        for c in cmds:
+            t = c.split()
+            if t[0] == "INIT":
+                if t[1] not in start:
+                    start[t[1]] = int(t[2]); funds[t[1]] = []
+                continue
+            day, hour = (int(x) for x in t[1].split(",")) if "," in t[1] else (int(t[1]), 0)
+            if t[0] == "FUND":
+                acct, method, amt = t[2], t[3], int(t[4])
+                if acct not in start:
+                    continue
+                if method == "STABLECOIN":
+                    funds[acct].append((day, amt)); continue
+                cutoff = 17 if method == "WIRE" else 20
+                if dow(day) >= 6:
+                    eff = day
+                    while dow(eff) != 1:
+                        eff += 1
+                elif hour >= cutoff:
+                    eff = next_bday(day)
+                else:
+                    eff = day
+                if method == "WIRE":
+                    funds[acct].append((eff, amt)); continue
+                wk = (eff - 1) // 7
+                if daily.get((acct, eff), 0) + amt > 5_000_000 or weekly.get((acct, wk), 0) + amt > 10_000_000:
+                    continue
+                daily[(acct, eff)] = daily.get((acct, eff), 0) + amt
+                weekly[(acct, wk)] = weekly.get((acct, wk), 0) + amt
+                funds[acct].append((next_bday(eff), amt))
+            else:
+                acct = t[2]
+                if acct not in start:
+                    out.append("FAILURE"); continue
+                out.append(str(start[acct] + sum(a for d, a in funds[acct] if d <= day)))
+        return ",".join(out)
+
+    rng = random.Random(7)
+    for _ in range(400):
+        cmds = [f"INIT a{i} {rng.randint(0, 1000)}" for i in range(rng.randint(1, 3))]
+        day = 1
+        for _ in range(rng.randint(1, 15)):
+            day += rng.randint(0, 3)
+            ts = f"{day},{rng.randint(0, 23)}" if rng.random() < 0.6 else str(day)
+            acct = rng.choice(["a0", "a1", "a2", "zz"])
+            if rng.random() < 0.6:
+                amt = rng.choice([1, 500, 2_000_000, 4_999_999, 5_000_000, 5_000_001])
+                cmds.append(f"FUND {ts} {acct} {rng.choice(['WIRE', 'ACH', 'STABLECOIN'])} {amt}")
+            else:
+                cmds.append(f"BALANCE {ts} {acct}")
+        assert f(cmds) == ref_ledger(cmds), cmds
+    print("All tests passed (including randomized cross-checks).")
 
 
 if __name__ == "__main__":

@@ -127,7 +127,39 @@ def _run_tests() -> None:
     # Empty input.
     assert f([]) == []
 
-    print("All tests passed.")
+
+    # ---- Randomized cross-check against an O(n^2) rescanning reference ----
+    import random
+
+    def ref_incidents(logs):
+        rows = [(int(a), b, c, int(d)) for a, b, c, d in (l.split(",") for l in logs)]
+        active, ev = set(), []
+        for i, (ts, m, code, cnt) in enumerate(rows):
+            win = [r for r in rows[:i + 1] if r[1] == m and ts - 29 <= r[0] <= ts]
+            ok = sum(r[3] for r in win if r[2] == "200")
+            for ec in sorted({r[2] for r in rows[:i + 1] if r[1] == m and r[2] != "200"}):
+                fails = sum(r[3] for r in win if r[2] == ec)
+                meets = fails >= 5 and fails * 100 > ok
+                if meets and (m, ec) not in active:
+                    active.add((m, ec)); ev.append((ts, m, ec, "TRIGGER"))
+                elif not meets and (m, ec) in active:
+                    active.discard((m, ec)); ev.append((ts, m, ec, "RESOLVE"))
+        ev.sort()
+        return [f"{t},{e},{m},{c}" for t, m, c, e in ev]
+
+    rng = random.Random(5)
+    for _ in range(300):
+        logs, ts, seen = [], 0, set()
+        for _ in range(rng.randint(1, 25)):
+            ts += rng.randint(0, 12)
+            m = rng.choice(["m1", "m2"]); code = rng.choice(["200", "500", "503", "404"])
+            if (ts, m, code) in seen:
+                continue
+            seen.add((ts, m, code))
+            cnt = rng.randint(1, 8) if code != "200" else rng.choice([1, 50, 300, 600])
+            logs.append(f"{ts},{m},{code},{cnt}")
+        assert f(logs) == ref_incidents(logs), logs
+    print("All tests passed (including randomized cross-checks).")
 
 
 if __name__ == "__main__":

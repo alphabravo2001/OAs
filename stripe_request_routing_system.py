@@ -188,7 +188,69 @@ def _run_tests() -> None:
     assert f("REGISTER a 0 0 1\n\nROUTE 0 0\n") == ["OK", "a 0 a"]
     assert f("") == []
 
-    print("All tests passed.")
+
+    # ---- Randomized cross-check against an independent reference ----
+    import random
+
+    def ref_routing(text):
+        R = 6371.0
+        def ok(lat, lon):
+            return -90 <= lat <= 90 and -180 <= lon <= 180
+        def hav(a, b, c, d):
+            a, b, c, d = map(math.radians, (a, b, c, d))
+            x = math.sin((c - a) / 2) ** 2 + math.cos(a) * math.cos(c) * math.sin((d - b) / 2) ** 2
+            return 2 * R * math.atan2(math.sqrt(x), math.sqrt(1 - x))
+        dcs, out = {}, []
+        for line in text.split("\n"):
+            p = line.split()
+            if not p:
+                continue
+            if p[0] == "REGISTER":
+                n, la, lo, cap = p[1], float(p[2]), float(p[3]), int(p[4])
+                if n in dcs or not ok(la, lo) or cap <= 0:
+                    out.append("ERROR")
+                else:
+                    dcs[n] = [la, lo, cap, True, 0]; out.append("OK")
+            elif p[0] == "SET_HEALTHY":
+                if p[1] in dcs and p[2].lower() in ("true", "false"):
+                    dcs[p[1]][3] = p[2].lower() == "true"; out.append("OK")
+                else:
+                    out.append("ERROR")
+            elif p[0] == "DISTANCE":
+                a, b, c, d = map(float, p[1:5])
+                out.append(str(int(math.floor(hav(a, b, c, d) + 0.5))) if ok(a, b) and ok(c, d) else "ERROR")
+            else:
+                la, lo = float(p[1]), float(p[2])
+                cands = sorted(((hav(la, lo, v[0], v[1]), n) for n, v in dcs.items() if v[3]))
+                if not cands:
+                    out.append("None"); continue
+                names = ",".join(n for _, n in cands)
+                for dist, n in cands:
+                    if dcs[n][4] < dcs[n][2]:
+                        dcs[n][4] += 1; out.append(f"{n} {int(math.floor(dist + 0.5))} {names}"); break
+                else:
+                    out.append(f"None {names}")
+        return out
+
+    rng = random.Random(9)
+    names = ["a", "b", "c", "d"]
+    for _ in range(300):
+        lines = []
+        for _ in range(rng.randint(1, 20)):
+            r = rng.random()
+            la = rng.choice([rng.uniform(-89, 89), 0, 89.5, -89.5, 91])
+            lo = rng.choice([rng.uniform(-180, 180), 0, 180, -180, -181])
+            if r < 0.35:
+                lines.append(f"REGISTER {rng.choice(names)} {la} {lo} {rng.choice([0, 1, 2, 3])}")
+            elif r < 0.5:
+                lines.append(f"SET_HEALTHY {rng.choice(names + ['zz'])} {rng.choice(['true', 'FALSE', 'True', 'maybe'])}")
+            elif r < 0.65:
+                lines.append(f"DISTANCE {la} {lo} {rng.uniform(-90, 90)} {rng.uniform(-180, 180)}")
+            else:
+                lines.append(f"ROUTE {rng.uniform(-90, 90)} {rng.uniform(-180, 180)}")
+        text = "\n".join(lines)
+        assert f(text) == ref_routing(text), text
+    print("All tests passed (including randomized cross-checks).")
 
 
 if __name__ == "__main__":
