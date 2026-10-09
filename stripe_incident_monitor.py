@@ -1,7 +1,6 @@
 """
-Stripe OA: Incident Detection / Incident Monitor
-(pasted from fastprep; the page's own URL is
- https://www.fastprep.io/problems/stripe-incident-monitor)
+Stripe OA: Incident Monitor
+https://www.fastprep.io/problems/stripe-incident-monitor
 
 detectIncidents(logs) -> String[]
 
