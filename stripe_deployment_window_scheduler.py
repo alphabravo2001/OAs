@@ -35,8 +35,15 @@ class Solution:
         WEEK = 7 * 24 * 60  # 10080 minutes
 
         rows = [line.strip() for line in inputCsv if line and line.strip()]
-        part = part.strip().lower().replace("_", "").replace(" ", "")
-        is_part2 = part in ("part2", "2", "p2")
+        part_key = (part or "").strip().lower().replace("_", "").replace(" ", "").replace("-", "")
+        if part_key in ("part2", "2", "p2", "two"):
+            is_part2 = True
+        elif part_key in ("part1", "1", "p1", "one"):
+            is_part2 = False
+        else:
+            # Unrecognised label: a leading all-numeric row can only be a part-2 header.
+            first = [p.strip() for p in rows[0].split(",")] if rows else []
+            is_part2 = len(first) >= 4 and all(p.lstrip("-").isdigit() for p in first)
 
         # ------------------------------------------------------------------
         # 1. Parse the header (part 2 only) and the window rows.
@@ -138,13 +145,13 @@ class Solution:
         # ------------------------------------------------------------------
         result = []
         for s, e in windows:
+            if len(result) >= k:
+                break
             s = max(s, earliest_start)
             e = min(e, WEEK)
             if e - s < min_duration:
                 continue
             result.append([s, e])
-            if len(result) >= k:
-                break
         return result
 
 
@@ -186,8 +193,94 @@ def _run_tests() -> None:
     # utc_now + lead past every window -> nothing
     assert f("part2", ["10000,100,1,5", "540,600,allowed,-480"]) == []
     assert f("part2", ["0,0,1,5"]) == []
+    # k == 0 returns nothing; min_continuous exactly equal to the window length is kept.
+    assert f("part2", ["0,0,10,0", "540,600,allowed,-480"]) == []
+    assert f("part2", ["0,0,60,5", "540,600,allowed,-480"]) == [[1020, 1080]]
+    assert f("part2", ["0,0,61,5", "540,600,allowed,-480"]) == []
+    # Lead time landing exactly on a window start keeps the whole window.
+    assert f("part2", ["1000,20,1,5", "540,600,allowed,-480"]) == [[1020, 1080]]
+    # Lead time clips a window that already started.
+    assert f("part2", ["1000,30,1,5", "540,600,allowed,-480"]) == [[1030, 1080]]
+    # Positive offset (east of UTC): local 600-660 at UTC+60 -> 540-600 UTC.
+    assert f("part2", ["0,0,1,5", "600,660,allowed,60"]) == [[540, 600]]
+    # A freeze that wraps the week boundary cuts both ends of the week.
+    assert f("part2", ["0,0,1,5", "0,10080,allowed,0", "10050,10110,freeze,0"]) == [[30, 10050]]
+    # An allowed window covering more than a whole week is the whole week.
+    assert f("part2", ["0,0,1,5", "0,20000,allowed,0"]) == [[0, 10080]]
+    # Rows may arrive unsorted and overlapping; adjacent deployable pieces merge across wrap pieces.
+    assert f("part2", ["0,0,1,5", "100,200,allowed,0", "0,100,allowed,0", "150,160,freeze,0"]) == \
+        [[0, 150], [160, 200]]
+    # Part label variants are accepted; an unlabeled numeric header is detected as part 2.
+    assert f("PART_2", ["0,0,10,5", "540,600,allowed,-480", "550,565,freeze,-480"]) == \
+        [[1020, 1030], [1045, 1080]]
+    assert f("Part 1", ["540,600,allowed", "570,585,freeze"]) == [[540, 570], [585, 600]]
+    assert f("", ["0,0,10,5", "540,600,allowed,-480", "550,565,freeze,-480"]) == \
+        [[1020, 1030], [1045, 1080]]
+    assert f("", ["540,600,allowed", "570,585,freeze"]) == [[540, 570], [585, 600]]
+    # Whitespace around fields is tolerated.
+    assert f("part1", [" 540 , 600 , allowed ", "570,585, freeze"]) == [[540, 570], [585, 600]]
 
-    print("All tests passed.")
+    # ---- Brute-force cross-check on random inputs (minute-by-minute simulation) ----
+    import random
+
+    WEEK = 10080
+
+    def runs(mask):
+        out, start = [], None
+        for m in range(WEEK + 1):
+            on = m < WEEK and mask[m]
+            if on and start is None:
+                start = m
+            elif not on and start is not None:
+                out.append([start, m])
+                start = None
+        return out
+
+    def brute1(rows):
+        allowed = [False] * WEEK
+        frozen = [False] * WEEK
+        for r in rows:
+            s, e, kind = r.split(",")
+            for m in range(int(s), int(e)):
+                (allowed if kind == "allowed" else frozen)[m] = True
+        return runs([a and not z for a, z in zip(allowed, frozen)])
+
+    def brute2(rows):
+        utc_now, lead, min_dur, k = (int(x) for x in rows[0].split(","))
+        allowed = [False] * WEEK
+        frozen = [False] * WEEK
+        for r in rows[1:]:
+            s, e, kind, off = r.split(",")
+            for m in range(int(s), int(e)):
+                (allowed if kind == "allowed" else frozen)[(m - int(off)) % WEEK] = True
+        out = []
+        for s, e in runs([a and not z for a, z in zip(allowed, frozen)]):
+            s = max(s, utc_now + lead)
+            if e - s >= max(min_dur, 1):
+                out.append([s, e])
+        return out[:k]
+
+    rng = random.Random(2026)
+    for _ in range(300):
+        rows = []
+        for _ in range(rng.randint(0, 6)):
+            s = rng.randint(0, WEEK - 1)
+            e = rng.randint(s, min(WEEK, s + 3000))
+            rows.append(f"{s},{e},{rng.choice(['allowed', 'freeze'])}")
+        assert f("part1", rows) == brute1(rows), rows
+
+    for _ in range(300):
+        utc_now = rng.randint(0, WEEK - 1)
+        header = f"{utc_now},{rng.randint(0, 500)},{rng.randint(0, 200)},{rng.randint(0, 6)}"
+        rows = [header]
+        for _ in range(rng.randint(0, 6)):
+            s = rng.randint(0, WEEK - 1)
+            e = rng.randint(s, min(WEEK, s + 3000))
+            off = rng.choice([-720, -480, -300, 0, 60, 120, 330, 540, 780])
+            rows.append(f"{s},{e},{rng.choice(['allowed', 'freeze'])},{off}")
+        assert f("part2", rows) == brute2(rows), rows
+
+    print("All tests passed (including 600 randomized brute-force comparisons).")
 
 
 if __name__ == "__main__":
