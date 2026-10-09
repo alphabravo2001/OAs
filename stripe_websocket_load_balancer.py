@@ -36,8 +36,9 @@ Rules
            "CONNECT,c6,u6,docA"]
         -> ["c1,u1,1", "c2,u2,2", "c3,u3,1", "c4,u4,3", "c5,u5,1"]
 
-Judge note (Oct 2026): FastPrep's Python runner caps the combined output of a whole
-run at 65536 bytes.  Hidden cases 7 and 9 each expect a ~50 KB log, so a correct
+Judge note (Oct 2026): FastPrep's judge caps the combined output of a whole run at
+65536 bytes, in every language (a C++ port, stripe_websocket_load_balancer.cpp, hits
+the same cap).  Hidden cases 7 and 9 each expect a ~50 KB log, so any correct
 solution is reported as "Output Limit Exceeded" on case 9.  Logic was verified on
 all 21 hidden cases across two runs (cases 1-8 in one, 1-6 and 8-21 in another).
 """
